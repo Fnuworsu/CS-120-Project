@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from datetime import datetime
 
 Base = declarative_base()
@@ -60,4 +61,60 @@ class Examination(Base):
     ai_confidence_score = Column(Float)
     notes = Column(String(500))
     reviewed_by = Column(String(100))
-    review_date = Column(DateTime) 
+    review_date = Column(DateTime)
+
+class ImageRecord(Base):
+    __tablename__ = "image_records"
+
+    # Fields as specified in the requirements
+    DATE = Column(DateTime, server_default=func.now())  # Date record/image was created
+    DEMOGRAPHIC = Column(Boolean, default=False)  # If True, document/image will be imported into Demographic Documents
+    ERRORCODE = Column(String(1))  # Error Code if document/image could not be imported
+    EXAMUNIQUE = Column(Integer, primary_key=True)  # Unique Exam identifier
+    IMAGEIMPORTUNIQUE = Column(Integer, unique=True)  # Unique identifier for imported document/image
+    IMPORTED = Column(DateTime)  # Date and time document/image was imported
+    NAME = Column(String(40))  # Name/Description of the document/image
+    PATH = Column(String(9))  # File path to the document/image
+    PATUNIQUE = Column(Integer)  # Unique identifier of the patient
+    TYPE = Column(String(20))  # Type of document/image
+    VENDORGRAPHUNIQUE = Column(Integer)  # Unique identifier of the API the document was imported from
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def to_dict(self):
+        return {
+            'DATE': self.DATE,
+            'DEMOGRAPHIC': self.DEMOGRAPHIC,
+            'ERRORCODE': self.ERRORCODE,
+            'EXAMUNIQUE': self.EXAMUNIQUE,
+            'IMAGEIMPORTUNIQUE': self.IMAGEIMPORTUNIQUE,
+            'IMPORTED': self.IMPORTED,
+            'NAME': self.NAME,
+            'PATH': self.PATH,
+            'PATUNIQUE': self.PATUNIQUE,
+            'TYPE': self.TYPE,
+            'VENDORGRAPHUNIQUE': self.VENDORGRAPHUNIQUE
+        }
+
+# Additional models for AI predictions
+class AIPrediction(Base):
+    __tablename__ = "ai_predictions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    image_record_id = Column(Integer, ForeignKey('image_records.EXAMUNIQUE'))
+    predicted_class = Column(String(50))
+    confidence = Column(Float)
+    clinical_features = Column(String(500))  # JSON string of clinical features
+    created_at = Column(DateTime, server_default=func.now())
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'image_record_id': self.image_record_id,
+            'predicted_class': self.predicted_class,
+            'confidence': self.confidence,
+            'clinical_features': self.clinical_features,
+            'created_at': self.created_at
+        } 
