@@ -71,7 +71,7 @@ class EyeDiseaseModel:
         self.model = resnet50(weights=ResNet50_Weights.DEFAULT)
         
         # Modify the final layer for our specific classes
-        num_classes = 4  # Normal, Glaucoma, Cataract, Scarring
+        num_classes = 6  # Healthy, Glaucoma, Cataract, Scarring, Cardiovascular, Diabetes
         self.model.fc = torch.nn.Linear(self.model.fc.in_features, num_classes)
         self.model = self.model.to(self.device)
         
@@ -86,7 +86,7 @@ class EyeDiseaseModel:
         ])
         
         # Define class labels
-        self.classes = ['Normal', 'Glaucoma', 'Cataract', 'Scarring']
+        self.classes = ['healthy', 'glaucoma', 'cataract', 'scarring', 'cardiovascular', 'diabetes']
 
     def preprocess_image(self, image_path):
         """
@@ -118,6 +118,11 @@ class EyeDiseaseModel:
             Dictionary containing predictions and confidence scores
         """
         try:
+            # Load and preprocess image
+            image = cv2.imread(image_path)
+            if image is None:
+                raise ValueError("Failed to load image")
+            
             # Preprocess image
             image_tensor = self.preprocess_image(image_path)
             if image_tensor is None:
@@ -144,7 +149,7 @@ class EyeDiseaseModel:
             )
 
             # Analyze additional clinical features
-            additional_features = self._analyze_clinical_features(image_path)
+            additional_features = self._analyze_clinical_features(image)
 
             # Combine all features
             combined_features = {**clinical_features, **additional_features}
@@ -152,22 +157,25 @@ class EyeDiseaseModel:
             # Adjust predictions based on clinical features
             final_predictions = self._adjust_predictions(probabilities, combined_features)
 
-            return {
-                'has_glaucoma': final_predictions['glaucoma'],
-                'has_cataract': final_predictions['cataract'],
-                'has_scarring': final_predictions['scarring'],
-                'has_cardiovascular_disease': final_predictions['cardiovascular'],
-                'has_diabetes': final_predictions['diabetes'],
-                'is_healthy': final_predictions['healthy'],
+            # Format response with confidence scores
+            response = {
+                'has_glaucoma': final_predictions['glaucoma'] > 0.5,
+                'has_cataract': final_predictions['cataract'] > 0.5,
+                'has_scarring': final_predictions['scarring'] > 0.5,
+                'has_cardiovascular_disease': final_predictions['cardiovascular'] > 0.5,
+                'has_diabetes': final_predictions['diabetes'] > 0.5,
+                'is_healthy': final_predictions['healthy'] > 0.5,
                 'confidence_scores': {
-                    'glaucoma': float(final_predictions['glaucoma_confidence']),
-                    'cataract': float(final_predictions['cataract_confidence']),
-                    'scarring': float(final_predictions['scarring_confidence']),
-                    'cardiovascular': float(final_predictions['cardiovascular_confidence']),
-                    'diabetes': float(final_predictions['diabetes_confidence']),
-                    'healthy': float(final_predictions['healthy_confidence'])
+                    'glaucoma': float(final_predictions['glaucoma']),
+                    'cataract': float(final_predictions['cataract']),
+                    'scarring': float(final_predictions['scarring']),
+                    'cardiovascular': float(final_predictions['cardiovascular']),
+                    'diabetes': float(final_predictions['diabetes']),
+                    'healthy': float(final_predictions['healthy'])
                 }
             }
+
+            return response
 
         except Exception as e:
             self.logger.error(f"Error in prediction: {str(e)}")
@@ -195,25 +203,37 @@ class EyeDiseaseModel:
                 })
         
         # Add condition-specific features
-        if predicted_class == 'Glaucoma':
+        if predicted_class == 'glaucoma':
             features.update({
                 'risk_factors': ['High intraocular pressure', 'Age', 'Family history'],
                 'severity': 'Moderate' if confidence < 0.8 else 'High',
                 'recommended_tests': ['Tonometry', 'Visual field test', 'Optic nerve examination']
             })
-        elif predicted_class == 'Cataract':
+        elif predicted_class == 'cataract':
             features.update({
                 'risk_factors': ['Age', 'UV exposure', 'Diabetes'],
                 'severity': 'Mild' if confidence < 0.7 else 'Moderate',
                 'recommended_tests': ['Visual acuity test', 'Slit lamp examination']
             })
-        elif predicted_class == 'Scarring':
+        elif predicted_class == 'scarring':
             features.update({
                 'risk_factors': ['Previous injury', 'Inflammation', 'Surgery'],
                 'severity': 'Moderate',
                 'recommended_tests': ['Corneal topography', 'Slit lamp examination']
             })
-        else:  # Normal
+        elif predicted_class == 'cardiovascular':
+            features.update({
+                'risk_factors': ['High blood pressure', 'Smoking', 'Diabetes'],
+                'severity': 'Moderate',
+                'recommended_tests': ['Echocardiogram', '24-hour blood pressure monitor']
+            })
+        elif predicted_class == 'diabetes':
+            features.update({
+                'risk_factors': ['Family history', 'Obesity', 'Physical inactivity'],
+                'severity': 'Pre-diabetes' if confidence < 0.7 else 'Diabetes',
+                'recommended_tests': ['Fasting blood glucose test', 'HbA1c test']
+            })
+        else:  # healthy
             features.update({
                 'risk_factors': [],
                 'severity': 'None',
@@ -222,167 +242,121 @@ class EyeDiseaseModel:
         
         return features
 
-    def _analyze_clinical_features(self, image_path):
-        """Analyze specific clinical features in the fundus image"""
-        # Load image for OpenCV processing
-        img = cv2.imread(image_path)
-        if img is None:
-            raise ValueError("Failed to load image for clinical analysis")
-        
-        # Convert to RGB for consistent processing
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Initialize feature dictionary
-        features = {
-            'cup_to_disc_ratio': 0.0,
-            'vessel_abnormalities': 0.0,
-            'opacity_score': 0.0,
-            'hemorrhages': 0.0,
-            'scarring_score': 0.0
-        }
-        
+    def _analyze_clinical_features(self, image):
+        """Analyze clinical features from the image"""
         try:
-            # Extract optic disc features (for glaucoma)
-            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(gray)
+            # Convert image to grayscale for analysis
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
             
-            # Detect circular structures (optic disc)
-            circles = cv2.HoughCircles(
-                enhanced, 
-                cv2.HOUGH_GRADIENT, 
-                dp=1, 
-                minDist=50,
-                param1=50,
-                param2=30,
-                minRadius=20,
-                maxRadius=100
-            )
+            # Calculate opacity score (reduced sensitivity)
+            opacity_score = np.mean(gray) / 255.0
+            opacity_score = min(max(opacity_score, 0.0), 1.0)
             
-            if circles is not None:
-                # Analyze cup-to-disc ratio
-                circles = np.uint16(np.around(circles))
-                for i in circles[0,:]:
-                    roi = enhanced[i[1]-i[2]:i[1]+i[2], i[0]-i[2]:i[0]+i[2]]
-                    if roi.size > 0:
-                        # Estimate cup-to-disc ratio using intensity analysis
-                        threshold = np.mean(roi) + np.std(roi)
-                        cup_area = np.sum(roi > threshold)
-                        disc_area = np.pi * (i[2]**2)
-                        features['cup_to_disc_ratio'] = min(cup_area / disc_area if disc_area > 0 else 0, 1.0)
+            # Calculate texture score for scarring
+            texture_score = cv2.Laplacian(gray, cv2.CV_64F).var() / 1000.0
+            texture_score = min(max(texture_score, 0.0), 1.0)
             
-            # Analyze blood vessels (for cardiovascular and diabetic conditions)
-            green_channel = img[:,:,1]  # Green channel shows vessels best
-            vessel_mask = cv2.adaptiveThreshold(
-                green_channel,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY_INV,
-                11,
-                2
-            )
-            features['vessel_abnormalities'] = np.sum(vessel_mask > 0) / vessel_mask.size
+            # Calculate vessel density and tortuosity
+            vessel_density = self._calculate_vessel_density(gray)
+            vessel_tortuosity = self._calculate_vessel_tortuosity(gray)
             
-            # Analyze overall image clarity (for cataracts)
-            features['opacity_score'] = 1.0 - cv2.Laplacian(gray, cv2.CV_64F).var() / 10000
+            # Calculate cup-to-disc ratio (simplified)
+            cup_to_disc_ratio = self._estimate_cup_to_disc_ratio(gray)
             
-            # Detect dark spots (hemorrhages for diabetic retinopathy)
-            dark_threshold = np.percentile(green_channel, 20)
-            dark_regions = np.sum(green_channel < dark_threshold) / green_channel.size
-            features['hemorrhages'] = dark_regions
+            # Calculate hemorrhages score
+            hemorrhages_score = self._detect_hemorrhages(gray)
             
-            # Analyze texture variations (for scarring)
-            texture = cv2.Sobel(gray, cv2.CV_64F, 1, 1, ksize=5)
-            features['scarring_score'] = np.std(texture) / 100
-            
+            return {
+                'opacity_score': float(opacity_score),
+                'texture_score': float(texture_score),
+                'vessel_density': float(vessel_density),
+                'vessel_tortuosity': float(vessel_tortuosity),
+                'cup_to_disc_ratio': float(cup_to_disc_ratio),
+                'hemorrhages': float(hemorrhages_score)
+            }
         except Exception as e:
-            logger.error(f"Error in clinical feature analysis: {str(e)}")
-            # Return default features if analysis fails
-            return features
-        
-        logger.info(f"Clinical features extracted: {features}")
-        return features
+            logger.error(f"Error analyzing clinical features: {str(e)}")
+            return {
+                'opacity_score': 0.0,
+                'texture_score': 0.0,
+                'vessel_density': 0.5,
+                'vessel_tortuosity': 0.5,
+                'cup_to_disc_ratio': 0.5,
+                'hemorrhages': 0.0
+            }
 
     def _adjust_predictions(self, model_probabilities, clinical_features):
         """Adjust model predictions based on clinical features"""
-        # Initialize prediction probabilities
         adjusted_probs = {
+            'healthy': 0.0,
             'glaucoma': 0.0,
             'cataract': 0.0,
             'scarring': 0.0,
             'cardiovascular': 0.0,
-            'diabetes': 0.0,
-            'healthy': 0.0
+            'diabetes': 0.0
         }
         
         # Map model probabilities to our conditions
-        # Assuming model_probabilities has 4 values: [normal, glaucoma, cataract, scarring]
+        # Assuming model_probabilities has 6 values: [healthy, glaucoma, cataract, scarring, cardiovascular, diabetes]
         adjusted_probs['healthy'] = float(model_probabilities[0])
         adjusted_probs['glaucoma'] = float(model_probabilities[1])
         adjusted_probs['cataract'] = float(model_probabilities[2])
         adjusted_probs['scarring'] = float(model_probabilities[3])
+        adjusted_probs['cardiovascular'] = float(model_probabilities[4])
+        adjusted_probs['diabetes'] = float(model_probabilities[5])
         
-        # Glaucoma adjustment
-        if clinical_features.get('cup_to_disc_ratio', 0) > 0.5:
-            adjusted_probs['glaucoma'] = max(
-                adjusted_probs['glaucoma'],
-                clinical_features['cup_to_disc_ratio'] * 0.7
-            )
+        # Glaucoma adjustment based on cup-to-disc ratio
+        if clinical_features['cup_to_disc_ratio'] > 0.6:
+            adjusted_probs['glaucoma'] *= 1.5
+            # Reduce other probabilities proportionally
+            total_other = sum(adjusted_probs.values()) - adjusted_probs['glaucoma']
+            for condition in adjusted_probs:
+                if condition != 'glaucoma':
+                    adjusted_probs[condition] *= (1 - 0.3)
         
-        # Cardiovascular/Diabetic adjustment
-        if clinical_features.get('vessel_abnormalities', 0) > 0.15:
-            vessel_score = clinical_features['vessel_abnormalities']
-            adjusted_probs['cardiovascular'] = max(
-                adjusted_probs['cardiovascular'],
-                vessel_score * 0.6
-            )
-            adjusted_probs['diabetes'] = max(
-                adjusted_probs['diabetes'],
-                vessel_score * 0.6
-            )
+        # Cataract adjustment based on opacity score
+        if clinical_features['opacity_score'] > 0.7:
+            adjusted_probs['cataract'] *= 1.3  # Reduced from 1.5 to 1.3
+            # Reduce other probabilities proportionally
+            total_other = sum(adjusted_probs.values()) - adjusted_probs['cataract']
+            for condition in adjusted_probs:
+                if condition != 'cataract':
+                    adjusted_probs[condition] *= (1 - 0.2)  # Reduced from 0.3 to 0.2
         
-        # Cataract adjustment
-        if clinical_features.get('opacity_score', 0) > 0.5:
-            adjusted_probs['cataract'] = max(
-                adjusted_probs['cataract'],
-                clinical_features['opacity_score'] * 0.8
-            )
+        # Scarring adjustment based on texture analysis
+        if clinical_features['texture_score'] > 0.8:
+            adjusted_probs['scarring'] *= 1.4
+            # Reduce other probabilities proportionally
+            total_other = sum(adjusted_probs.values()) - adjusted_probs['scarring']
+            for condition in adjusted_probs:
+                if condition != 'scarring':
+                    adjusted_probs[condition] *= (1 - 0.25)
         
-        # Diabetic retinopathy adjustment
-        if clinical_features.get('hemorrhages', 0) > 0.1:
-            adjusted_probs['diabetes'] = max(
-                adjusted_probs['diabetes'],
-                clinical_features['hemorrhages'] * 0.7
-            )
+        # Cardiovascular adjustment based on vessel analysis
+        if clinical_features['vessel_density'] < 0.3:
+            adjusted_probs['cardiovascular'] *= 1.4
+            # Reduce other probabilities proportionally
+            total_other = sum(adjusted_probs.values()) - adjusted_probs['cardiovascular']
+            for condition in adjusted_probs:
+                if condition != 'cardiovascular':
+                    adjusted_probs[condition] *= (1 - 0.25)
         
-        # Scarring adjustment
-        if clinical_features.get('scarring_score', 0) > 0.3:
-            adjusted_probs['scarring'] = max(
-                adjusted_probs['scarring'],
-                clinical_features['scarring_score'] * 0.6
-            )
+        # Diabetes adjustment based on vessel tortuosity
+        if clinical_features['vessel_tortuosity'] > 0.7:
+            adjusted_probs['diabetes'] *= 1.4
+            # Reduce other probabilities proportionally
+            total_other = sum(adjusted_probs.values()) - adjusted_probs['diabetes']
+            for condition in adjusted_probs:
+                if condition != 'diabetes':
+                    adjusted_probs[condition] *= (1 - 0.25)
         
         # Normalize probabilities
         total = sum(adjusted_probs.values())
         if total > 0:
-            normalized_probs = {k: v/total for k, v in adjusted_probs.items()}
-        else:
-            normalized_probs = adjusted_probs
+            for condition in adjusted_probs:
+                adjusted_probs[condition] /= total
         
-        # Add confidence scores
-        result = {
-            'glaucoma': normalized_probs['glaucoma'] > 0.5,
-            'cataract': normalized_probs['cataract'] > 0.5,
-            'scarring': normalized_probs['scarring'] > 0.5,
-            'cardiovascular': normalized_probs['cardiovascular'] > 0.5,
-            'diabetes': normalized_probs['diabetes'] > 0.5,
-            'healthy': normalized_probs['healthy'] > 0.5,
-            'glaucoma_confidence': normalized_probs['glaucoma'],
-            'cataract_confidence': normalized_probs['cataract'],
-            'scarring_confidence': normalized_probs['scarring'],
-            'cardiovascular_confidence': normalized_probs['cardiovascular'],
-            'diabetes_confidence': normalized_probs['diabetes'],
-            'healthy_confidence': normalized_probs['healthy']
-        }
-        
-        return result
+        return adjusted_probs
