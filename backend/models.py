@@ -74,7 +74,7 @@ class ImageRecord(Base):
     IMAGEIMPORTUNIQUE = Column(Integer, unique=True)  # Unique identifier for imported document/image
     IMPORTED = Column(DateTime)  # Date and time document/image was imported
     NAME = Column(String(40))  # Name/Description of the document/image
-    PATH = Column(String(9))  # File path to the document/image
+    PATH = Column(String(255))  # File path to the document/image
     PATUNIQUE = Column(Integer)  # Unique identifier of the patient
     TYPE = Column(String(20))  # Type of document/image
     VENDORGRAPHUNIQUE = Column(Integer)  # Unique identifier of the API the document was imported from
