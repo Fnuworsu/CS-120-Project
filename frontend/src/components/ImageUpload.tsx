@@ -5,11 +5,10 @@ import {
   Eye, 
   Upload, 
   Loader2, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle,
-  Info,
-  FileText
+ 
+  AlertCircle
+  
+ 
 } from 'lucide-react';
 import './ImageUpload.css';
 
